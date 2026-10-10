@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="kk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Галактика</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+html,body{height:100%;margin:0;background:#000;overflow:hidden}
+canvas{display:block;width:100%;height:100%}
+#hint{position:fixed;left:0;right:0;bottom:calc(14px + env(safe-area-inset-bottom,0px));text-align:center;color:#8a90b0;font:14px system-ui,sans-serif;opacity:0;transition:opacity .6s;pointer-events:none}
+#ui{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(3,4,11,.88);z-index:5;padding:20px;box-sizing:border-box}
+#ui.off{display:none}
+.box{width:100%;max-width:380px;text-align:center;font-family:system-ui,sans-serif;color:#dfe6ff}
+.box h1{font-size:22px;margin:0 0 8px;font-weight:600}
+.box p{margin:0 0 18px;font-size:14px;color:#8a90b0;line-height:1.4}
+#w{width:100%;box-sizing:border-box;padding:13px 14px;font-size:16px;border-radius:12px;border:1px solid #2c3358;background:#0b0e1f;color:#fff;text-align:center;text-transform:uppercase;outline:none}
+#w:focus{border-color:#6b82ff}
+#go{margin-top:12px;width:100%;padding:13px;font-size:16px;font-weight:600;border:0;border-radius:12px;background:#5b72ff;color:#fff;cursor:pointer}
+#err{min-height:20px;margin-top:10px;font-size:13px;color:#ff8a8a}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint">Басқа сөз енгізу үшін басыңыз</div>
+<div id="ui"><div class="box"><h1></h1><p></p><input id="w" maxlength="14" autocomplete="off" placeholder=><button id="go"></button><div id="err"></div></div></div>
+<script>
+let WORD = "", LET = [], running = false;
+const IMG_SRC = "photo.jpg";   // фото файлының аты (index.html-мен бір папкада тұруы керек)
+const cv = document.getElementById('c'), ctx = cv.getContext('2d'), hint = document.getElementById('hint');
+const img = new Image();
+let W, H, P = [], G = [], B = [], t0, cs;
+
+const ease = x => x < 0 ? 0 : x > 1 ? 1 : x * x * (3 - 2 * x);
+const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0; [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const TILT = -0.45; let CAM = 0.6;
+
+function init() {
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  cv.width = W * dpr; cv.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const o = document.createElement('canvas'); o.width = W; o.height = H;
+  const x = o.getContext('2d', { willReadFrequently: true });
+
+  // сөздің нүктелері
+  const fs = Math.min(W / (WORD.length * 0.72), 150);
+  x.fillStyle = '#fff'; x.font = '800 ' + fs + 'px system-ui, Arial, sans-serif';
+  x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(WORD, W / 2, H / 2);
+  let d = x.getImageData(0, 0, W, H).data, tp = [];
+  for (let y = 0; y < H; y += 3) for (let xx = 0; xx < W; xx += 3) if (d[(y * W + xx) * 4 + 3] > 128) tp.push([xx, y]);
+  shuffle(tp);
+
+  // фото -> әріптер торы
+  const s = Math.min(W * 0.94 / img.width, H * 0.9 / img.height);
+  const iw = img.width * s, ih = img.height * s, ix = (W - iw) / 2, iy = (H - ih) / 2;
+  x.clearRect(0, 0, W, H); x.drawImage(img, ix, iy, iw, ih);
+  d = x.getImageData(0, 0, W, H).data;
+  cs = Math.max(6, Math.sqrt(iw * ih / 5500));
+  const cells = []; let n = 0;
+  for (let y = iy; y < iy + ih - cs / 2; y += cs) for (let xx = ix; xx < ix + iw - cs / 2; xx += cs) {
+    const px = (xx + cs / 2) | 0, py = (y + cs / 2) | 0, k = (py * W + px) * 4;
+    const r = d[k], g = d[k + 1], b = d[k + 2], l = (0.3 * r + 0.59 * g + 0.11 * b) / 255;
+    const v = Math.min(255, 45 + l * 215) | 0;
+    cells.push({ x: px, y: py, l, c: `rgb(${v},${v},${v})`, ch: LET[n++ % LET.length] });
+  }
+  shuffle(cells);
+
+  const R = Math.min(W, H) * 0.47, mk0 = (i, r) => {
+    const th = (i % 3) * 2.094 + r * 0.022 + (Math.random() - 0.5) * 0.9 * (1 - r / R * 0.3);
+    const f = r / R, hue = 215;
+    return { r, th, h: (Math.random() + Math.random() - 1) * R * 0.1 * (1 - f * 0.5), w: 0.9 / (1 + r * 0.012), gc: `hsl(${hue},${Math.random() * 30}%,${100 - f * 20 - Math.random() * 12}%)`,
+             sz: 0.5 + Math.random() * Math.random() * 1.6, ph: Math.random() * 6.28, tw: 1.5 + Math.random() * 3 };
+  };
+  const mk = (i, r) => {
+    const o = mk0(i, r), u = Math.random();
+    if (u < 0.3) {                       // орталықтағы шар (сфера)
+      const a = Math.random() * 6.283, b = Math.acos(2 * Math.random() - 1), rs = R * 0.6 * (0.92 + Math.random() * 0.1);
+      Object.assign(o, { k: 1, x0: rs * Math.sin(b) * Math.cos(a), y0: rs * Math.cos(b), z0: rs * Math.sin(b) * Math.sin(a), w: 0.3, sz: 0.5 + Math.random() * 0.7 });
+    } else if (u < 0.68) { o.k = 0; o.sz = 0.5 + Math.random() * Math.random() * 1.2; }   // спираль белдеуі
+    else {                               // экранға шашыраған жұлдыздар
+      Object.assign(o, { k: 2, x0: (Math.random() - 0.5) * W * 2.2, y0: (Math.random() - 0.5) * H * 1.5, z0: -R * 1.1 + Math.random() * R * 3.2, w: 0.05 + Math.random() * 0.05, sz: 0.7 + Math.pow(Math.random(), 3) * 3 });
+    }
+    return o;
+  };
+  P = cells.map((c, i) => Object.assign(mk(i, Math.pow(Math.random(), 0.65) * R), {
+    sx: Math.random() * W, sy: Math.random() * H, tx: tp[i % tp.length][0], ty: tp[i % tp.length][1],
+    c, dl: Math.random() * 0.35 }));
+  G = []; for (let i = 0; i < 6000; i++) G.push(mk(i, Math.pow(Math.random(), 0.85) * R * 1.5));
+  B = []; for (let i = 0; i < 160; i++) B.push({ x: Math.random() * W, y: Math.random() * H, s: Math.random() * 1.1 + 0.3, ph: Math.random() * 6.28, tw: 1 + Math.random() * 2 });
+  t0 = performance.now(); hint.style.opacity = 0;
+}
+
+function gpos(p, t) {
+  let x, y, z;
+  if (p.k === 1 || p.k === 2) { const a = t * p.w, ca = Math.cos(a), sa = Math.sin(a); x = p.x0 * ca - p.z0 * sa; z = p.x0 * sa + p.z0 * ca; y = p.y0; }
+  else { const a = p.th + t * p.w; x = Math.cos(a) * p.r; z = Math.sin(a) * p.r; y = p.h; }
+  const c = Math.cos(CAM), n = Math.sin(CAM), y2 = y * c - z * n, z2 = y * n + z * c;
+  const sc = (Math.min(W, H) * 1.03) / (Math.min(W, H) * 1.03 + z2);
+  const X = x * sc, Y = y2 * sc;
+  return [W / 2 + X * Math.cos(TILT) - Y * Math.sin(TILT), H / 2 + X * Math.sin(TILT) + Y * Math.cos(TILT), sc];
+}
+const tw = (p, t) => 0.55 + 0.45 * Math.sin(t * p.tw + p.ph);
+
+function star(x, y, sz, a, c) {
+  ctx.fillStyle = c;
+  if (sz > 1.5) {
+    ctx.globalAlpha = a * 0.18; ctx.beginPath(); ctx.arc(x, y, sz * 1.5, 0, 6.283); ctx.fill();
+    ctx.globalAlpha = a * 0.9; ctx.beginPath(); ctx.arc(x, y, sz * 0.55, 0, 6.283); ctx.fill();
+  } else { ctx.globalAlpha = a; ctx.fillRect(x, y, sz, sz); }
+}
+
+function frame(now) {
+  const t = (now - t0) / 1000; CAM = 0.6 + 0.1 * Math.sin(t * 0.25);
+  ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+  ctx.globalCompositeOperation = 'lighter';
+
+  for (const b of B) star(b.x, b.y, b.s, 0.15 + 0.5 * (0.5 + 0.5 * Math.sin(t * b.tw + b.ph)), '#fff');
+
+  const gal = ease((t - 4.2) / 2) * (1 - ease((t - 9.5) / 1.8));   // галактика көрінуі
+  if (gal > 0.01) {
+    ctx.save(); ctx.translate(W / 2, H / 2); ctx.rotate(TILT); ctx.scale(1, Math.sin(CAM));
+    const rr = Math.min(W, H) * 0.3, gr = ctx.createRadialGradient(0, 0, 0, 0, 0, rr);
+    gr.addColorStop(0, 'rgba(255,255,255,0.4)'); gr.addColorStop(0.25, 'rgba(235,240,255,0.12)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.globalAlpha = gal; ctx.fillStyle = gr; ctx.fillRect(-rr, -rr, rr * 2, rr * 2); ctx.restore();
+    for (const g of G) { const [x, y, s] = gpos(g, t - 4.2); star(x, y, g.sz * s, gal * (0.35 + 0.65 * tw(g, t)), g.gc); }
+  }
+
+  ctx.font = '700 ' + cs * 1.15 + 'px ui-monospace, Menlo, Consolas, monospace';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (const p of P) {
+    let x, y, letter = false, a = 1, col = '#fff', sc = 1;
+    if (t < 2.4) { const e = ease((t - p.dl) / 2); x = p.sx + (p.tx - p.sx) * e; y = p.sy + (p.ty - p.sy) * e; a = 0.4 + 0.6 * e; }
+    else if (t < 4.2) { x = p.tx + Math.sin(t * 3 + p.r) * 0.7; y = p.ty + Math.cos(t * 3 + p.th) * 0.7; }
+    else if (t < 6.2) { const e = ease((t - 4.2 - p.dl * 0.5) / 1.7), g = gpos(p, t - 4.2); x = p.tx + (g[0] - p.tx) * e; y = p.ty + (g[1] - p.ty) * e; sc = 1 + (g[2] - 1) * e; if (e > 0.3) col = p.gc; a = 0.4 + 0.6 * tw(p, t); }
+    else if (t < 10) { const g = gpos(p, t - 4.2); x = g[0]; y = g[1]; sc = g[2]; col = p.gc; a = 0.35 + 0.65 * tw(p, t); }
+    else {
+      const e = ease((t - 10 - p.dl * 2) / 2.2), g = gpos(p, t - 4.2);
+      x = g[0] + (p.c.x - g[0]) * e; y = g[1] + (p.c.y - g[1]) * e; sc = 1 + (g[2] - 1) * (1 - e);
+      if (e > 0.85) { letter = true; col = p.c.c; a = Math.min(1, (e - 0.85) / 0.15) * (0.85 + 0.15 * tw(p, t)); }
+      else { col = p.gc; a = 0.4 + 0.6 * tw(p, t); }
+    }
+    if (letter) { ctx.globalAlpha = a; ctx.fillStyle = col; ctx.fillText(p.c.ch, x, y); }
+    else star(x, y, p.sz * sc + (t < 4.2 ? 0.7 : 0), a, col);
+  }
+  ctx.globalAlpha = 1;
+  if (t > 13.5) hint.style.opacity = 1;
+  requestAnimationFrame(frame);
+}
+
+const ui = document.getElementById('ui'), inp = document.getElementById('w'), err = document.getElementById('err');
+function start() {
+  const v = inp.value.trim().toUpperCase().replace(/\s+/g, ' ');
+  const L = [...v.replace(/\s/g, '')];
+  if (L.length < 6) { err.textContent = 'Кемінде 6 әріп енгізіңіз'; return; }
+  err.textContent = ''; WORD = v; LET = L; ui.classList.add('off'); inp.blur();
+  init();
+  if (!running) { running = true; requestAnimationFrame(frame); }
+}
+document.getElementById('go').onclick = start;
+inp.addEventListener('keydown', e => { if (e.key === 'Enter') start(); });
+img.src = IMG_SRC;
+addEventListener('click', () => {
+  if (running && performance.now() - t0 > 13500 && ui.classList.contains('off')) { ui.classList.remove('off'); inp.focus(); inp.select(); }
+});
+addEventListener('resize', () => { if (running && img.complete) init(); });
+</script>
+</body>
+</html>
